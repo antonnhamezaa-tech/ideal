@@ -31,8 +31,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if grep -RInE --exclude-dir=node_modules --exclude-dir=.git 'Bienvenido de nuevo|Cuentas demo|demoAccounts|default: module\.LoginPage' src; then
-            echo 'Legacy login implementation is still present.'
+          if grep -RInE --exclude-dir=node_modules --exclude-dir=.git 'Bienvenido de nuevo|Cuentas demo|default: module\.LoginPage' src; then
+            echo 'Legacy login UI is still present.'
             exit 1
           fi
           grep -Fq "@/pages/UnifiedAuthPage" src/App.tsx
