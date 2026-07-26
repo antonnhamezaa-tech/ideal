@@ -4,56 +4,18 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-  schedule:
-    - cron: '*/5 * * * *'
 
 permissions:
   contents: read
   pages: write
   id-token: write
-  issues: write
 
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
-  pages-check:
-    runs-on: ubuntu-latest
-    outputs:
-      status: ${{ steps.pages.outputs.status }}
-    steps:
-      - name: Check or enable GitHub Pages
-        id: pages
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set +e
-          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/pages"
-          get_code=$(curl -sS -o /tmp/pages-get.json -w '%{http_code}' \
-            -H 'Accept: application/vnd.github+json' \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "$api")
-
-          if [ "$get_code" = '404' ]; then
-            post_code=$(curl -sS -o /tmp/pages-post.json -w '%{http_code}' \
-              -X POST \
-              -H 'Accept: application/vnd.github+json' \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H 'X-GitHub-Api-Version: 2026-03-10' \
-              "$api" \
-              -d '{"build_type":"workflow"}')
-            echo "status=enable:${post_code}" >> "$GITHUB_OUTPUT"
-            cat /tmp/pages-post.json || true
-          else
-            echo "status=existing:${get_code}" >> "$GITHUB_OUTPUT"
-            cat /tmp/pages-get.json || true
-          fi
-
   build:
-    needs: pages-check
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -98,26 +60,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
-  report:
-    if: always()
-    needs: [pages-check, build, deploy]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Report deployment result
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const body = [
-              `Pages API: ${{ needs.pages-check.outputs.status }}`,
-              `Build: ${{ needs.build.result }}`,
-              `Deploy: ${{ needs.deploy.result }}`,
-              `Commit: ${context.sha}`,
-              `Run: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-            ].join('\n');
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: 'PAGES_DEPLOY_STATUS',
-              body,
-            });
