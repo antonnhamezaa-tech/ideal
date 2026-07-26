@@ -1,0 +1,69 @@
+name: Remove phone search option
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  remove-phone-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Remove phone search UI and route
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('src/components/mobile-app-v2.tsx')
+          source = path.read_text(encoding='utf-8')
+
+          replacements = [
+              ("  Phone,\n", ""),
+              ("type AppPage = 'tabs' | 'location' | 'map' | 'phone'", "type AppPage = 'tabs' | 'location' | 'map'"),
+              ("function LocationScreen({ t, onBack, onChangeRegion, onMap, onNearby, onPhone, nearbyStatus }: {", "function LocationScreen({ t, onBack, onChangeRegion, onMap, onNearby, nearbyStatus }: {"),
+              ("  onNearby: () => void\n  onPhone: () => void\n  nearbyStatus: LocationStatus", "  onNearby: () => void\n  nearbyStatus: LocationStatus"),
+              ("<button type=\"button\" className=\"m2-location-action\" onClick={onPhone} data-testid=\"search-phone\"><span><Phone /></span><strong>{t.searchByPhone}</strong><ChevronRight /></button>", ""),
+              ("    if (location.pathname === '/' && params.get('panel') === 'telefono') {\n      setPage('phone')\n      return\n    }\n", ""),
+              ("<LocationScreen t={t} onBack={() => navigate('/')} onChangeRegion={() => openRegionSettings('location')} onMap={openMap} onNearby={() => { void openNearby() }} onPhone={() => navigate('/?panel=telefono')} nearbyStatus={nearbyStatus} />", "<LocationScreen t={t} onBack={() => navigate('/')} onChangeRegion={() => openRegionSettings('location')} onMap={openMap} onNearby={() => { void openNearby() }} nearbyStatus={nearbyStatus} />"),
+              ("  if (page === 'phone') return <div className=\"m2-app notranslate\" translate=\"no\"><PhoneSearchScreen t={t} listings={allListings} onBack={() => navigate('/?panel=ubicacion')} onFound={(listingId) => navigate(`/habitacion/${listingId}`)} /></div>\n", ""),
+          ]
+
+          for old, new in replacements:
+              if old not in source:
+                  raise SystemExit(f'Missing expected source fragment: {old[:100]!r}')
+              source = source.replace(old, new, 1)
+
+          source, count = re.subn(
+              r"\nfunction normalizePhone\(value: string\) \{.*?\n\}\n\nfunction GoogleMapCanvas",
+              "\nfunction GoogleMapCanvas",
+              source,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise SystemExit('Phone search screen block was not found exactly once')
+
+          path.write_text(source, encoding='utf-8')
+          PY
+
+      - name: Commit change
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/components/mobile-app-v2.tsx
+          if git diff --cached --quiet; then
+            echo 'Phone search is already removed.'
+            exit 0
+          fi
+          git commit -m 'Remove phone search option from mobile location screen'
+          git push origin HEAD:main
