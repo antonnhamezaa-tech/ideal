@@ -1,0 +1,62 @@
+name: Validate unified authentication
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  validate:
+    if: github.event_name == 'workflow_dispatch' || github.event.issue.title == 'RUN_AUTH_VALIDATION'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Ensure legacy login is absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInE --exclude-dir=node_modules --exclude-dir=.git 'Bienvenido de nuevo|Cuentas demo|demoAccounts|default: module\.LoginPage' src; then
+            echo 'Legacy login implementation is still present.'
+            exit 1
+          fi
+          grep -q "@/pages/UnifiedAuthPage" src/App.tsx
+          grep -q 'path="acceso" element={<LoginPage />}' src/App.tsx
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
+        env:
+          VITE_BASE_PATH: /ideal/
+
+      - name: Report result
+        if: always() && github.event_name == 'issues'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `AUTH_VALIDATION_RESULT: ${{ job.status }}\nRun: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
