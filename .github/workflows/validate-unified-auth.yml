@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 jobs:
@@ -17,6 +17,36 @@ jobs:
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
+
+      - name: Remove legacy login translations
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/contexts/i18n-context.tsx')
+          lines = path.read_text(encoding='utf-8').splitlines()
+          obsolete = (
+              "  'Bienvenido de nuevo':",
+              "  'Accede para continuar donde lo dejaste.':",
+              "  'Recuérdame':",
+              "  '¿Has olvidado la contraseña?':",
+              "  '¿No tienes cuenta?':",
+              "  'Mostrar contraseña':",
+              "  'Ocultar contraseña':",
+              "  'Revisa el email y vuelve a intentarlo.':",
+          )
+          cleaned = [line for line in lines if not line.startswith(obsolete)]
+          path.write_text('\n'.join(cleaned) + '\n', encoding='utf-8')
+          PY
+
+          if ! git diff --quiet -- src/contexts/i18n-context.tsx; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add src/contexts/i18n-context.tsx
+            git commit -m 'Remove legacy login translations'
+            git push origin HEAD:main
+          fi
 
       - name: Set up Node
         uses: actions/setup-node@v4
