@@ -27,24 +27,38 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Ensure legacy login is absent
+      - name: Inspect authentication implementation
+        id: auth
+        continue-on-error: true
         shell: bash
         run: |
-          set -euo pipefail
-          if grep -RInE --exclude-dir=node_modules --exclude-dir=.git 'Bienvenido de nuevo|Cuentas demo|default: module\.LoginPage' src; then
-            echo 'Legacy login UI is still present.'
-            exit 1
-          fi
-          grep -Fq "@/pages/UnifiedAuthPage" src/App.tsx
-          grep -Fq 'path="acceso" element={<LoginPage />}' src/App.tsx
+          matches="$(grep -RInE --exclude-dir=node_modules --exclude-dir=.git 'Bienvenido de nuevo|Cuentas demo|default: module\.LoginPage' src || true)"
+          unified=no
+          route=no
+          grep -Fq "@/pages/UnifiedAuthPage" src/App.tsx && unified=yes
+          grep -Fq 'path="acceso" element={<LoginPage />}' src/App.tsx && route=yes
+          {
+            echo 'matches<<EOF'
+            echo "$matches"
+            echo 'EOF'
+            echo "unified=$unified"
+            echo "route=$route"
+          } >> "$GITHUB_OUTPUT"
+          test -z "$matches" && test "$unified" = yes && test "$route" = yes
 
       - name: Lint
+        id: lint
+        continue-on-error: true
         run: npm run lint
 
       - name: Typecheck
+        id: typecheck
+        continue-on-error: true
         run: npm run typecheck
 
       - name: Production build
+        id: build
+        continue-on-error: true
         run: npm run build
         env:
           VITE_BASE_PATH: /ideal/
@@ -54,9 +68,29 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const body = [
+              'AUTH_VALIDATION_DIAGNOSTICS',
+              `Auth scan: ${{ steps.auth.outcome }}`,
+              `Unified import: ${{ steps.auth.outputs.unified }}`,
+              `Unified route: ${{ steps.auth.outputs.route }}`,
+              `Legacy matches: ${{ steps.auth.outputs.matches }}`,
+              `Lint: ${{ steps.lint.outcome }}`,
+              `Typecheck: ${{ steps.typecheck.outcome }}`,
+              `Build: ${{ steps.build.outcome }}`,
+              `Run: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            ].join('\n');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `AUTH_VALIDATION_RESULT: ${{ job.status }}\nRun: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              body,
             })
+
+      - name: Enforce successful validation
+        if: always()
+        shell: bash
+        run: |
+          test '${{ steps.auth.outcome }}' = success
+          test '${{ steps.lint.outcome }}' = success
+          test '${{ steps.typecheck.outcome }}' = success
+          test '${{ steps.build.outcome }}' = success
