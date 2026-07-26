@@ -35,8 +35,8 @@ jobs:
             echo 'Legacy login implementation is still present.'
             exit 1
           fi
-          grep -q "@/pages/UnifiedAuthPage" src/App.tsx
-          grep -q 'path="acceso" element={<LoginPage />}' src/App.tsx
+          grep -Fq "@/pages/UnifiedAuthPage" src/App.tsx
+          grep -Fq 'path="acceso" element={<LoginPage />}' src/App.tsx
 
       - name: Lint
         run: npm run lint
