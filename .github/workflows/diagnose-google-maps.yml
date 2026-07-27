@@ -52,14 +52,6 @@ jobs:
           API_ERROR: ${{ steps.maps.outputs.api_error }}
         with:
           script: |
-            const issues = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'maps-diagnostics',
-              per_page: 1,
-            });
-            if (!issues.data.length) return;
             const body = [
               'MAPS_DIAGNOSTICS_RESULT',
               `API key secret: ${process.env.KEY_STATE}`,
@@ -70,6 +62,6 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: issues.data[0].number,
+              issue_number: 13,
               body,
             });
