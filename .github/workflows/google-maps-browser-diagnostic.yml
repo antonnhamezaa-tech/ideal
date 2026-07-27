@@ -1,0 +1,131 @@
+name: Diagnose Google Maps in browser
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  diagnose:
+    if: github.event_name == 'workflow_dispatch' || github.event.issue.title == 'RUN_GOOGLE_MAPS_BROWSER_DIAGNOSTIC'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Test Google Maps on published origin
+        id: maps
+        shell: bash
+        env:
+          API_KEY: ${{ secrets.VITE_GOOGLE_MAPS_API_KEY }}
+          MAP_ID: ${{ secrets.VITE_GOOGLE_MAPS_MAP_ID }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { chromium } from '@playwright/test'
+          import fs from 'node:fs'
+
+          const apiKey = process.env.API_KEY || ''
+          const mapId = process.env.MAP_ID || ''
+          const logs = []
+          const browser = await chromium.launch({ headless: true })
+          const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+
+          page.on('console', (message) => {
+            const text = message.text()
+            if (/Google Maps|MapError|maps\.googleapis|Billing|API key|referer/i.test(text)) logs.push(`${message.type()}: ${text}`)
+          })
+          page.on('pageerror', (error) => logs.push(`pageerror: ${error.message}`))
+          page.on('requestfailed', (request) => {
+            if (/googleapis|gstatic/.test(request.url())) logs.push(`requestfailed: ${request.url().replace(apiKey, '[KEY]')} :: ${request.failure()?.errorText || ''}`)
+          })
+
+          await page.goto('https://antonnhamezaa-tech.github.io/ideal/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+          await page.evaluate(() => {
+            const host = document.createElement('div')
+            host.id = 'google-maps-diagnostic-host'
+            host.style.cssText = 'position:fixed;inset:0;width:390px;height:700px;z-index:2147483647;background:white'
+            document.body.appendChild(host)
+            window.__mapsDiagnosticCallback = () => {
+              try {
+                const options = { center: { lat: 28.2916, lng: -16.6291 }, zoom: 9 }
+                window.__mapsDiagnosticMap = new google.maps.Map(host, options)
+                host.dataset.created = 'true'
+              } catch (error) {
+                host.dataset.createError = error instanceof Error ? error.message : String(error)
+              }
+            }
+          })
+
+          const params = new URLSearchParams({ key: apiKey, v: 'weekly', callback: '__mapsDiagnosticCallback', language: 'es', region: 'ES' })
+          if (mapId) params.set('map_ids', mapId)
+          await page.addScriptTag({ url: `https://maps.googleapis.com/maps/api/js?${params.toString()}` })
+          await page.waitForTimeout(10000)
+
+          const state = await page.evaluate(() => {
+            const host = document.getElementById('google-maps-diagnostic-host')
+            return {
+              created: host?.dataset.created || 'false',
+              createError: host?.dataset.createError || '',
+              authFailure: typeof window.gm_authFailure === 'function' ? 'handler-present' : 'no-handler',
+              googleLoaded: typeof window.google?.maps?.Map === 'function' ? 'true' : 'false',
+              visibleError: document.body.innerText.match(/This page can't load Google Maps correctly|Esta página no puede cargar Google Maps correctamente|For development purposes only/gi)?.join(' | ') || '',
+            }
+          })
+
+          await page.screenshot({ path: 'google-maps-diagnostic.png', fullPage: false })
+          await browser.close()
+
+          const joined = logs.join('\n').replaceAll(apiKey, '[KEY]')
+          const known = joined.match(/(RefererNotAllowedMapError|InvalidKeyMapError|ApiNotActivatedMapError|BillingNotEnabledMapError|ExpiredKeyMapError|DeletedApiProjectMapError|OverQuotaMapError|ClientBillingNotEnabledMapError|InvalidAppCheckTokenMapError)/)?.[1] || 'none-detected'
+          const result = {
+            googleLoaded: state.googleLoaded,
+            mapCreated: state.created,
+            createError: state.createError,
+            visibleError: state.visibleError,
+            detectedError: known,
+            logs: joined.slice(0, 6000),
+          }
+          fs.writeFileSync('maps-diagnostic-result.json', JSON.stringify(result, null, 2))
+          console.log(JSON.stringify(result, null, 2))
+          NODE
+
+      - name: Report result
+        if: always() && github.event_name == 'issues'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let result = { detectedError: 'diagnostic-failed', logs: 'No result file was produced.' };
+            try { result = JSON.parse(fs.readFileSync('maps-diagnostic-result.json', 'utf8')); } catch {}
+            const body = [
+              'GOOGLE_MAPS_BROWSER_DIAGNOSTIC',
+              `Google API loaded: ${result.googleLoaded ?? 'unknown'}`,
+              `Map constructed: ${result.mapCreated ?? 'unknown'}`,
+              `Detected error: ${result.detectedError ?? 'unknown'}`,
+              `Visible overlay: ${result.visibleError || 'none-detected'}`,
+              `Create error: ${result.createError || 'none'}`,
+              '',
+              'Relevant console output:',
+              '```',
+              result.logs || 'none',
+              '```',
+              `Run: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            ].join('\n');
+            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
