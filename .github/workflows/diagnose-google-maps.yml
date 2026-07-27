@@ -3,6 +3,8 @@ name: Diagnose Google Maps
 on:
   schedule:
     - cron: '*/5 * * * *'
+  issues:
+    types: [opened]
   workflow_dispatch:
 
 permissions:
@@ -11,6 +13,7 @@ permissions:
 
 jobs:
   diagnose:
+    if: github.event_name != 'issues' || github.event.issue.title == 'RUN_MAPS_DIAGNOSTICS'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -52,6 +55,7 @@ jobs:
           API_ERROR: ${{ steps.maps.outputs.api_error }}
         with:
           script: |
+            const issueNumber = context.eventName === 'issues' ? context.issue.number : 13;
             const body = [
               'MAPS_DIAGNOSTICS_RESULT',
               `API key secret: ${process.env.KEY_STATE}`,
@@ -62,6 +66,6 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: 13,
+              issue_number: issueNumber,
               body,
             });
